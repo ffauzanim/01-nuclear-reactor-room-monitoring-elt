@@ -1,0 +1,37 @@
+# datasouce.yml dan dokumentasinya
+# Sistem Monitoring Reaktor Nuklir, PID C
+# M Dzakir Thuha Al Ghaffar (245150307111004)
+# Abdillah Abyan Ilman Nafian (245150300111003)
+# Faaza Fauzan Adzim (245150307111010)
+# Ivang Arfandia (245150307111003)
+# Fathian Auzaie Hanzalah (245150307111007)
+
+apiVersion: 1
+
+datasources:
+  # Konfigurasi koneksi ke database InfluxDB
+  - name: influxdb
+    type: influxdb
+    # Mode proxy berarti server Grafana yang melakukan request ke database, bukan browser user
+    access: proxy
+    # UID atau Unique Identifier yang statis sangat penting agar panel di 'dashboard.json' bisa otomatis mengenali datasource ini
+    # Jika UID ini berubah, dashboard akan error "Datasource not found"
+    uid: df6lw7sxvhmo0c
+    # Alamat URL internal container InfluxDB dalam jaringan Docker
+    url: http://influxdb:8086
+    # Menjadikan ini datasource utama jika panel tidak menentukan datasource secara spesifik
+    isDefault: true
+    editable: true
+    jsonData:
+      # Menandakan penggunaan InfluxDB versi 2.x dengan bahasa query Flux
+      version: Flux
+      # Nama organisasi sesuai konfigurasi awal di docker-compose.yml
+      organization: iot-org
+      # Nama bucket default tujuan query
+      defaultBucket: iot
+      # Mengabaikan verifikasi sertifikat SSL karena komunikasi berjalan di jaringan internal Docker HTTP
+      tlsSkipVerify: true
+    secureJsonData:
+      # Token autentikasi admin untuk izin membaca data.
+      # Harus sama persis dengan yang ada di docker-compose.yml
+      token: iot-super-token

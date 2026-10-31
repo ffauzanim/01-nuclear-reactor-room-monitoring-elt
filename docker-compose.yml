@@ -1,0 +1,138 @@
+# docker-compose.yml dan dokumentasinya
+# Sistem Monitoring Reaktor Nuklir, PID C
+# M Dzakir Thuha Al Ghaffar (245150307111004)
+# Abdillah Abyan Ilman Nafian (245150300111003)
+# Faaza Fauzan Adzim (245150307111010)
+# Ivang Arfandia (245150307111003)
+# Fathian Auzaie Hanzalah (245150307111007) 
+
+version: "3.8"
+
+services:
+  # Zookeeper Service
+  # Berfungsi sebagai manajer untuk Kafka. Layanan ini menyimpan metadata topik, status partisi, dan memantau kesehatan node broker Kafka
+  zookeeper:
+    image: bitnamilegacy/zookeeper:3.9
+    environment:
+      # Mengizinkan koneksi tanpa autentikasi, pengaturan ini digunakan untuk kemudahan di lingkungan pengembangan (dev)
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      # Port standar untuk klien Zookeeper berkomunikasi
+      - "2181:2181"
+
+  # Kafka Service (Message Broker)
+  # Bertindak sebagai pipeline data pusat dengan throughput tinggi
+  # Sesuai arsitektur, data mengalir dari Bridge ke Kafka, lalu diambil oleh Telegraf
+  kafka:
+    image: bitnamilegacy/kafka:3.7
+    # Kafka memiliki ketergantungan pada Zookeeper untuk beroperasi.
+    depends_on: [zookeeper]
+    ports:
+      # Port eksternal untuk akses debugging dari host atau komputer pengguna.
+      - "9092:9092"
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      # Konfigurasi listener ganda untuk memisahkan akses jaringan
+      # 1. Protokol PLAINTEXT: Diakses dari luar container (localhost:9092)
+      # 2. Protokol PLAINTEXT_INTERNAL: Diakses antar container dalam jaringan Docker (kafka:29092)
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_INTERNAL://:29092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      # Menetapkan listener internal untuk komunikasi antar broker jika nanti dikembangkan menjadi klaster
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT_INTERNAL
+      - KAFKA_CFG_BROKER_ID=1
+      - ALLOW_PLAINTEXT_LISTENER=yes
+
+  # Layanan Mosquitto (MQTT Broker)
+  # Berperan sebagai gerbang atau gateway penerima data paling depan dari sensor atau simulator dummy
+  # Menggunakan protokol MQTT yang ringan sebelum data diteruskan ke sistem yang lebih besar
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      # Port standar MQTT (TCP)
+      - "1883:1883"
+    volumes:
+      # Menggunakan konfigurasi kustom untuk mengizinkan koneksi anonim tanpa password
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  # InfluxDB Service (Time-Series Database)
+  # Tempat penyimpanan utama untuk data sensor historis, menerapkan konsep ELT (Extract-Load-Transform) di mana data mentah dimuat (Load) di sini 
+  # sebelum diolah lebih lanjut
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      # Port untuk antarmuka web (UI) dan akses API InfluxDB
+      - "8086:8086"
+    environment:
+      # Variabel inisialisasi otomatis saat container pertama kali dijalankan
+      # Membuat organisasi, bucket, dan user admin secara otomatis tanpa konfigurasi manual GUI
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=iot-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=iot
+      # Token admin (hardcoded) agar Telegraf dan Grafana bisa langsung terhubung
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=iot-super-token
+    volumes:
+      # Volume persisten untuk memastikan data sensor tidak hilang saat container di restart
+      - influx-data:/var/lib/influxdb2
+
+  # Layanan Telegraf (ETL Agent), berfungsi sebagai agen pengumpul data yang bertindak sebagai consumer Kafka
+  # Tugasnya mengambil data JSON dari topik Kafka, memproses formatnya, lalu mengirim ke InfluxDB
+  telegraf:
+    image: telegraf:1.28
+    # Memastikan Kafka dan InfluxDB sudah berjalan sebelum layanan ini dimulai
+    depends_on: [kafka, influxdb]
+    environment:
+      # Token autentikasi yang cocok dengan yang diset di service InfluxDB
+      - INFLUX_TOKEN=iot-super-token
+    volumes:
+      # Memuat konfigurasi pipeline input yaiut Kafka dan output InfluxDB
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    # Perintah kustom untuk mencegah race condition
+    # Memberikan jeda 5 detik agar Kafka benar benar siap menerima koneksi sebelum Telegraf dimulai
+    command: >
+      sh -c "echo 'Menunggu Kafka Hidup' && sleep 5 && telegraf --config /etc/telegraf/telegraf.conf"
+
+  # Grafana Service (Dashboard Visualisasi)
+  # Menampilkan grafik real time dan menghitung RRSI
+  grafana:
+    image: grafana/grafana:10.4.2
+    depends_on: [influxdb]
+    ports:
+      # Akses dashboard visualisasi melalui browser
+      - "3000:3000"
+    environment:
+      # Kredensial login admin default
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      # Token yang digunakan plugin datasource untuk membaca data dari InfluxDB
+      - INFLUX_TOKEN=iot-super-token
+      # Menginstal plugin tambahan secara otomatis untuk kebutuhan panel jam dan data JSON
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      # Menyimpan data pengguna, sesi login, dan pengaturan dashboard
+      - grafana-data:/var/lib/grafana
+      # Provisioning, skrip otomatisasi untuk menghubungkan datasource dan memuat dashboard
+      # sehingga pengguna tidak perlu melakukan import manual setelah login
+      - ./grafana/provisioning/datasources/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./grafana/provisioning/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./grafana/provisioning/dashboards/json:/etc/grafana/provisioning/dashboards/json
+
+  # Bridge Service (Middleware Kustom)
+  # Menjalankan kode Python mqtt_to_kafka.py untuk menjembatani protokol komunikasi dan menerima pesan dari topik MQTT dan mempublikasikannya ulang ke topik Kafka
+  bridge:
+    build: ./bridge # Membangun image Docker dari Dockerfile yang ada di folder ./bridge
+    depends_on: [kafka, mosquitto]
+    restart: always # Memastikan skrip restart otomatis jika terjadi error atau crash
+    environment:
+      - BOOTSTRAP=kafka:29092 # Alamat koneksi ke Kafka internal
+      - TOPIC_KAFKA=iot.sensors # Nama topik tujuan di Kafka
+      - BROKER_MQTT=mosquitto # Alamat koneksi ke MQTT broker internal
+      - TOPIC_MQTT=reactor/+/metrics # Pola wildcard untuk menangkap data dari semua ID reaktor
+
+# Konfigurasi Volume
+# Mendefinisikan volume Docker untuk penyimpanan data yang persisten
+volumes:
+  influx-data: # Volume untuk menyimpan data time series InfluxDB
+  grafana-data: # Volume untuk menyimpan konfigurasi dan data user Grafana

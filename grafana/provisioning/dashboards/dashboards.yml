@@ -1,0 +1,29 @@
+# dashboard.yml dan dokumentasinya
+# Sistem Monitoring Reaktor Nuklir, PID C
+# M Dzakir Thuha Al Ghaffar (245150307111004)
+# Abdillah Abyan Ilman Nafian (245150300111003)
+# Faaza Fauzan Adzim (245150307111010)
+# Ivang Arfandia (245150307111003)
+# Fathian Auzaie Hanzalah (245150307111007) 
+
+apiVersion: 1
+
+providers:
+  # Konfigurasi penyedia dashboard
+  - name: "Sistem Monitoring Reaktor Nuklir"
+    # Mengaitkan dashboard ini ke main rrg dengan id 1
+    orgId: 1
+    # Nama folder yang akan dibuat di menu Grafana
+    # Dashboard akan masuk ke folder agar rapi dan tidak tercampur di folder general
+    folder: "Monitoring"
+    # Menentukan bahwa sumber dashboard adalah file lokal, bukan dari database atau API
+    type: file
+    # Mengizinkan pengguna untuk menghapus dashboard dari UI jika diperlukan
+    disableDeletion: false
+    # Interval waktu detik bagi Grafana untuk mengecek perubahan pada file JSON
+    # Jika file JSON diedit, Grafana akan mendeteksi dan memperbarui tampilan dalam 10 detik
+    updateIntervalSeconds: 10
+    options:
+      # Lokasi direktori di dalam container tempat file JSON dashboard disimpan
+      # Path ini harus sinkron dengan volume yang di mount pada service Grafana di docker-compose.yml
+      path: /etc/grafana/provisioning/dashboards/json
